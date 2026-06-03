@@ -1,0 +1,13 @@
+const express = require('express');
+const router = express.Router();
+const { getSessions, startSession, pauseSession, resumeSession, stopSession, addManualSession, getActiveSession, deleteSession } = require('../controllers/sessionController');
+const { protect } = require('../middlewares/auth');
+router.use(protect);
+router.route('/').get(getSessions).post(startSession);
+router.get('/active', getActiveSession);
+router.post('/manual', addManualSession);
+router.post('/:id/pause', pauseSession);
+router.post('/:id/resume', resumeSession);
+router.post('/:id/stop', stopSession);
+router.delete('/:id', deleteSession);
+module.exports = router;

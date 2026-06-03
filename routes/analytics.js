@@ -1,0 +1,12 @@
+const express = require('express');
+const router = express.Router();
+const { getDashboardStats, getHeatmap, getSubjectDistribution, getWeeklyChart, getDailyChart, getProductivityInsights } = require('../controllers/analyticsController');
+const { protect } = require('../middlewares/auth');
+router.use(protect);
+router.get('/dashboard', getDashboardStats);
+router.get('/heatmap', getHeatmap);
+router.get('/subjects', getSubjectDistribution);
+router.get('/weekly', getWeeklyChart);
+router.get('/daily', getDailyChart);
+router.get('/insights', getProductivityInsights);
+module.exports = router;
