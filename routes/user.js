@@ -1,10 +1,12 @@
 const express = require('express');
 const router = express.Router();
-const { completeOnboarding, updateProfile, getUserStats, deleteAccount } = require('../controllers/userController');
+const { completeOnboarding, updateProfile, getUserStats, changePassword, exportData, deleteAccount } = require('../controllers/userController');
 const { protect } = require('../middlewares/auth');
 router.use(protect);
 router.post('/onboard', completeOnboarding);
 router.put('/profile', updateProfile);
 router.get('/stats', getUserStats);
+router.put('/password', changePassword);
+router.get('/export', exportData);
 router.delete('/account', deleteAccount);
 module.exports = router;

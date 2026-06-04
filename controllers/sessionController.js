@@ -10,6 +10,36 @@ const { notifyStudySessionCompleted, notifyStreakProgress, notifyGoalCompleted }
 
 const XP_PER_HOUR = 20;
 const XP_PER_POMODORO = 10;
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+const addDays = (date, days) => {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+};
+
+const isProtectedRestGap = (lastStudyDate, todayDate, restDays = []) => {
+  if (!lastStudyDate) return false;
+  let cursor = addDays(lastStudyDate, 1);
+  const end = new Date(todayDate);
+  end.setHours(0, 0, 0, 0);
+  cursor.setHours(0, 0, 0, 0);
+  if (cursor >= end) return false;
+  while (cursor < end) {
+    if (!restDays.includes(DAY_NAMES[cursor.getDay()])) return false;
+    cursor = addDays(cursor, 1);
+  }
+  return true;
+};
+
+const calculateQualityScore = ({ duration, focusScore, productivityRating, distractions = 0, reflection = {} }) => {
+  const focusPart = (Number(focusScore) || 5) * 4;
+  const productivityPart = (Number(productivityRating) || 5) * 4;
+  const durationPart = Math.min(20, Math.round((duration || 0) / 1800) * 5);
+  const reflectionPart = reflection.completed || reflection.nextAction ? 10 : 0;
+  const distractionPenalty = Math.min(20, Number(distractions) * 3 || 0);
+  return Math.max(0, Math.min(100, focusPart + productivityPart + durationPart + reflectionPart - distractionPenalty));
+};
 
 const updateUserStats = async (userId, durationSeconds) => {
   const hours = durationSeconds / 3600;
@@ -21,8 +51,10 @@ const updateUserStats = async (userId, durationSeconds) => {
   const today = new Date().toISOString().split('T')[0];
   const lastStudy = user.lastStudyDate ? user.lastStudyDate.toISOString().split('T')[0] : null;
   const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+  const protectedRestGap = isProtectedRestGap(user.lastStudyDate, new Date(), user.preferences?.restDays || []);
   if (lastStudy === today) { /* same day, no streak change */ }
   else if (lastStudy === yesterday) { user.currentStreak = (user.currentStreak || 0) + 1; }
+  else if (protectedRestGap) { user.currentStreak = (user.currentStreak || 0) + 1; }
   else { user.currentStreak = 1; }
   if (user.currentStreak > (user.longestStreak || 0)) user.longestStreak = user.currentStreak;
   user.lastStudyDate = new Date();
@@ -129,7 +161,22 @@ const stopSession = asyncHandler(async (req, res) => {
   if (req.body.mood) session.mood = req.body.mood;
   if (req.body.focusScore) session.focusScore = req.body.focusScore;
   if (req.body.productivityRating) session.productivityRating = req.body.productivityRating;
+  if (req.body.reflection) {
+    session.reflection = {
+      completed: req.body.reflection.completed || '',
+      blockers: req.body.reflection.blockers || '',
+      nextAction: req.body.reflection.nextAction || '',
+      distractions: Math.max(0, Number(req.body.reflection.distractions) || 0),
+    };
+  }
   if (req.body.pomodoroCount) session.pomodoroCount = req.body.pomodoroCount;
+  session.qualityScore = calculateQualityScore({
+    duration: session.duration,
+    focusScore: session.focusScore,
+    productivityRating: session.productivityRating,
+    distractions: session.reflection?.distractions || 0,
+    reflection: session.reflection || {},
+  });
   const { xpEarned, streakInfo } = await updateUserStats(req.user._id, session.duration);
   session.xpEarned = xpEarned;
   await session.save();
@@ -154,7 +201,9 @@ const addManualSession = asyncHandler(async (req, res) => {
   const session = await StudySession.create({
     user: req.user._id, subject: subjectId || null, topic: topicId || null, exam: examId || null,
     title: title || '', startTime: start, endTime: end, duration, isActive: false, mode: 'manual',
-    notes: notes || '', mood: mood || 'neutral', focusScore: focusScore || 5, productivityRating: productivityRating || 5, xpEarned,
+    notes: notes || '', mood: mood || 'neutral', focusScore: focusScore || 5, productivityRating: productivityRating || 5,
+    qualityScore: calculateQualityScore({ duration, focusScore: focusScore || 5, productivityRating: productivityRating || 5 }),
+    xpEarned,
   });
   if (subjectId) await Subject.findByIdAndUpdate(subjectId, { $inc: { totalStudyHours: duration / 3600 } });
   await Promise.all([

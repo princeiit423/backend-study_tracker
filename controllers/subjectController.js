@@ -4,6 +4,8 @@ const Exam = require('../models/Exam');
 const asyncHandler = require('../utils/asyncHandler');
 const { successResponse, errorResponse } = require('../utils/response');
 
+const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const getSubjects = asyncHandler(async (req, res) => {
   const filter = { user: req.user._id, isArchived: false };
   if (req.query.examId) filter.exam = req.query.examId;
@@ -13,6 +15,8 @@ const getSubjects = asyncHandler(async (req, res) => {
 
 const createSubject = asyncHandler(async (req, res) => {
   const { name, description, color, icon, goalHours, priority, difficulty, exam } = req.body;
+  const existing = await Subject.findOne({ user: req.user._id, name: new RegExp(`^${escapeRegex(String(name).trim())}$`, 'i'), isArchived: false });
+  if (existing) return errorResponse(res, 'A subject with this name already exists', 409);
   if (exam) {
     const examDoc = await Exam.findOne({ _id: exam, user: req.user._id });
     if (!examDoc) return errorResponse(res, 'Exam not found', 404);

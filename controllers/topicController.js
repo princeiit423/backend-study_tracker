@@ -3,6 +3,8 @@ const Subject = require('../models/Subject');
 const asyncHandler = require('../utils/asyncHandler');
 const { successResponse, errorResponse } = require('../utils/response');
 
+const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const updateSubjectProgress = async (subjectId, userId) => {
   const topics = await Topic.find({ subject: subjectId, user: userId, parentTopic: null });
   if (topics.length === 0) return;
@@ -24,6 +26,8 @@ const createTopic = asyncHandler(async (req, res) => {
   const { name, description, subjectId, parentTopic, priority, difficulty, estimatedHours, tags, resources } = req.body;
   const subject = await Subject.findOne({ _id: subjectId, user: req.user._id });
   if (!subject) return errorResponse(res, 'Subject not found', 404);
+  const existing = await Topic.findOne({ user: req.user._id, subject: subjectId, name: new RegExp(`^${escapeRegex(String(name).trim())}$`, 'i') });
+  if (existing) return errorResponse(res, 'A topic with this name already exists in this subject', 409);
   const topic = await Topic.create({ user: req.user._id, subject: subjectId, parentTopic: parentTopic || null, name, description, priority: priority || 'medium', difficulty: difficulty || 'medium', estimatedHours: estimatedHours || 0, tags: tags || [], resources: resources || [] });
   await updateSubjectProgress(subjectId, req.user._id);
   return successResponse(res, { topic }, 'Topic created', 201);

@@ -4,8 +4,9 @@ const userSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true, maxlength: 100 },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
+    passwordHash: { type: String, select: false },
     avatar: { type: String, default: '' },
-    clerkId: { type: String, unique: true, sparse: true },
+    role: { type: String, enum: ['user', 'admin'], default: 'user' },
 
     // Onboarding
     isOnboarded: { type: Boolean, default: false },
@@ -49,6 +50,9 @@ const userSchema = new mongoose.Schema(
     longestStreak: { type: Number, default: 0 },
     lastStudyDate: { type: Date, default: null },
 
+    // Auth
+    refreshTokens: [{ token: String, createdAt: Date }],
+
     // Privacy
     isPublicProfile: { type: Boolean, default: false },
     showOnLeaderboard: { type: Boolean, default: true },
@@ -79,7 +83,8 @@ userSchema.methods.calculateLevel = function () {
 
 userSchema.methods.toPublicJSON = function () {
   const obj = this.toObject();
-  delete obj.clerkId;
+  delete obj.passwordHash;
+  delete obj.refreshTokens;
   return obj;
 };
 

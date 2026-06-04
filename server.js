@@ -7,7 +7,6 @@ const cookieParser = require('cookie-parser');
 const mongoSanitize = require('express-mongo-sanitize');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
-const { clerkMiddleware } = require('@clerk/express');
 require('dotenv').config();
 
 const logger = require('./utils/logger');
@@ -29,6 +28,14 @@ const noteRoutes = require('./routes/note');
 const mockTestRoutes = require('./routes/mockTest');
 const notificationRoutes = require('./routes/notification');
 const leaderboardRoutes = require('./routes/leaderboard');
+const taskRoutes = require('./routes/task');
+const studyPlanRoutes = require('./routes/studyPlan');
+const revisionRoutes = require('./routes/revision');
+const calendarRoutes = require('./routes/calendar');
+const adminRoutes = require('./routes/admin');
+const mistakeRoutes = require('./routes/mistake');
+const motivationRoutes = require('./routes/motivation');
+const coachRoutes = require('./routes/coach');
 
 const app = express();
 
@@ -70,7 +77,6 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser(process.env.COOKIE_SECRET));
 app.use(compression());
-app.use(clerkMiddleware());
 
 // Logging
 if (process.env.NODE_ENV === 'development') {
@@ -100,6 +106,14 @@ app.use('/api/notes', noteRoutes);
 app.use('/api/mock-tests', mockTestRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/leaderboard', leaderboardRoutes);
+app.use('/api/tasks', taskRoutes);
+app.use('/api/study-plans', studyPlanRoutes);
+app.use('/api/revisions', revisionRoutes);
+app.use('/api/calendar', calendarRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/mistakes', mistakeRoutes);
+app.use('/api/motivation', motivationRoutes);
+app.use('/api/coach', coachRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {

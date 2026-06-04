@@ -32,6 +32,13 @@ const studySessionSchema = new mongoose.Schema(
     },
     focusScore: { type: Number, default: 5, min: 1, max: 10 },
     productivityRating: { type: Number, default: 5, min: 1, max: 10 },
+    qualityScore: { type: Number, default: 0, min: 0, max: 100 },
+    reflection: {
+      completed: { type: String, trim: true, maxlength: 800, default: '' },
+      blockers: { type: String, trim: true, maxlength: 800, default: '' },
+      nextAction: { type: String, trim: true, maxlength: 500, default: '' },
+      distractions: { type: Number, default: 0, min: 0, max: 99 },
+    },
 
     // Date for easy querying
     date: { type: String }, // YYYY-MM-DD
