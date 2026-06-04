@@ -1,26 +1,24 @@
-const { verifyAccessToken } = require('../utils/jwt');
+const { getAuth } = require('@clerk/express');
 const User = require('../models/User');
 const asyncHandler = require('../utils/asyncHandler');
+const { syncClerkUser } = require('../controllers/authController');
 
 const protect = asyncHandler(async (req, res, next) => {
-  let token;
+  const { userId } = getAuth(req);
 
-  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
-    token = req.headers.authorization.split(' ')[1];
+  if (!userId) {
+    return res.status(401).json({ success: false, message: 'Not authorized' });
   }
 
-  if (!token) {
-    return res.status(401).json({ success: false, message: 'Not authorized, no token' });
-  }
-
-  const decoded = verifyAccessToken(token);
-  const user = await User.findById(decoded.id).select('-refreshTokens');
+  let user = await User.findOne({ clerkId: userId });
 
   if (!user) {
-    return res.status(401).json({ success: false, message: 'User not found' });
+    const synced = await syncClerkUser(userId);
+    user = synced.user;
   }
 
   req.user = user;
+  req.clerkUserId = userId;
   next();
 });
 

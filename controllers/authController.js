@@ -1,143 +1,80 @@
-const { OAuth2Client } = require('google-auth-library');
+const { clerkClient } = require('@clerk/express');
 const User = require('../models/User');
 const asyncHandler = require('../utils/asyncHandler');
-const {
-  generateAccessToken,
-  generateRefreshToken,
-  verifyRefreshToken,
-  setRefreshTokenCookie,
-  clearRefreshTokenCookie,
-} = require('../utils/jwt');
 const { successResponse, errorResponse } = require('../utils/response');
 
-const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+const getPrimaryEmail = (clerkUser) => {
+  const primaryEmail = clerkUser.emailAddresses?.find(
+    (email) => email.id === clerkUser.primaryEmailAddressId
+  );
+  return primaryEmail?.emailAddress || clerkUser.emailAddresses?.[0]?.emailAddress;
+};
 
-// @desc    Google OAuth Sign In/Sign Up
-// @route   POST /api/auth/google
-const googleAuth = asyncHandler(async (req, res) => {
-  const { credential, clientId } = req.body;
+const getDisplayName = (clerkUser, email) => {
+  const fullName = [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(' ').trim();
+  return fullName || clerkUser.username || email?.split('@')[0] || 'AceStudy User';
+};
 
-  if (!credential) {
-    return errorResponse(res, 'Google credential is required', 400);
-  }
-
-  // Verify Google token
-  const ticket = await googleClient.verifyIdToken({
-    idToken: credential,
-    audience: process.env.GOOGLE_CLIENT_ID,
-  });
-
-  const payload = ticket.getPayload();
-  const { sub: googleId, email, name, picture } = payload;
+const syncClerkUser = async (clerkId) => {
+  const clerkUser = await clerkClient.users.getUser(clerkId);
+  const email = getPrimaryEmail(clerkUser);
 
   if (!email) {
-    return errorResponse(res, 'Email not provided by Google', 400);
+    throw new Error('Clerk account does not have an email address');
   }
 
-  // Find or create user
-  let user = await User.findOne({ $or: [{ googleId }, { email }] });
+  let user = await User.findOne({ $or: [{ clerkId }, { email: email.toLowerCase() }] });
   const isNewUser = !user;
 
   if (!user) {
     user = await User.create({
-      name,
+      clerkId,
       email,
-      googleId,
-      avatar: picture || '',
+      name: getDisplayName(clerkUser, email),
+      avatar: clerkUser.imageUrl || '',
       isOnboarded: false,
     });
   } else {
-    // Update existing user
-    if (!user.googleId) user.googleId = googleId;
-    if (picture && !user.avatar) user.avatar = picture;
-    if (name && !user.name) user.name = name;
+    user.clerkId = clerkId;
+    user.email = email;
+    user.name = user.name || getDisplayName(clerkUser, email);
+    if (clerkUser.imageUrl && !user.avatar) user.avatar = clerkUser.imageUrl;
+    await user.save();
   }
 
-  // Generate tokens
-  const accessToken = generateAccessToken(user._id);
-  const refreshToken = generateRefreshToken(user._id);
+  return { user, isNewUser };
+};
 
-  // Store refresh token
-  user.refreshTokens = user.refreshTokens || [];
-  user.refreshTokens.push({ token: refreshToken, createdAt: new Date() });
+// @desc    Sync signed-in Clerk user with Mongo profile
+// @route   POST /api/auth/sync
+const syncUser = asyncHandler(async (req, res) => {
+  const clerkId = req.clerkUserId;
 
-  // Keep only last 5 refresh tokens
-  if (user.refreshTokens.length > 5) {
-    user.refreshTokens = user.refreshTokens.slice(-5);
+  if (!clerkId) {
+    return errorResponse(res, 'Not authorized', 401);
   }
 
-  await user.save();
-
-  setRefreshTokenCookie(res, refreshToken);
+  const { user, isNewUser } = await syncClerkUser(clerkId);
 
   return successResponse(
     res,
-    {
-      accessToken,
-      user: user.toPublicJSON(),
-      isNewUser,
-    },
+    { user: user.toPublicJSON(), isNewUser },
     isNewUser ? 'Account created successfully' : 'Signed in successfully',
     isNewUser ? 201 : 200
   );
 });
 
-// @desc    Refresh access token
-// @route   POST /api/auth/refresh
-const refreshToken = asyncHandler(async (req, res) => {
-  const token = req.cookies?.refreshToken;
-
-  if (!token) {
-    return errorResponse(res, 'No refresh token', 401);
-  }
-
-  const decoded = verifyRefreshToken(token);
-  const user = await User.findById(decoded.id);
-
-  if (!user) {
-    return errorResponse(res, 'User not found', 401);
-  }
-
-  const storedToken = user.refreshTokens?.find((t) => t.token === token);
-  if (!storedToken) {
-    return errorResponse(res, 'Invalid refresh token', 401);
-  }
-
-  const newAccessToken = generateAccessToken(user._id);
-  const newRefreshToken = generateRefreshToken(user._id);
-
-  // Rotate refresh token
-  user.refreshTokens = user.refreshTokens.filter((t) => t.token !== token);
-  user.refreshTokens.push({ token: newRefreshToken, createdAt: new Date() });
-  await user.save();
-
-  setRefreshTokenCookie(res, newRefreshToken);
-
-  return successResponse(res, { accessToken: newAccessToken }, 'Token refreshed');
-});
-
-// @desc    Logout
+// @desc    Logout acknowledgement. Clerk handles session sign-out on the frontend.
 // @route   POST /api/auth/logout
 const logout = asyncHandler(async (req, res) => {
-  const token = req.cookies?.refreshToken;
-
-  if (token) {
-    const user = await User.findOne({ 'refreshTokens.token': token });
-    if (user) {
-      user.refreshTokens = user.refreshTokens.filter((t) => t.token !== token);
-      await user.save();
-    }
-  }
-
-  clearRefreshTokenCookie(res);
   return successResponse(res, {}, 'Logged out successfully');
 });
 
 // @desc    Get current user
 // @route   GET /api/auth/me
 const getMe = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.user._id).select('-refreshTokens');
-  return successResponse(res, { user }, 'User retrieved');
+  const user = await User.findById(req.user._id);
+  return successResponse(res, { user: user.toPublicJSON() }, 'User retrieved');
 });
 
-module.exports = { googleAuth, refreshToken, logout, getMe };
+module.exports = { syncUser, logout, getMe, syncClerkUser };

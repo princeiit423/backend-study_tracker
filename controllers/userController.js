@@ -43,15 +43,15 @@ const updateProfile = asyncHandler(async (req, res) => {
     req.user._id,
     { $set: updates },
     { new: true, runValidators: true }
-  ).select('-refreshTokens');
+  );
 
-  return successResponse(res, { user }, 'Profile updated');
+  return successResponse(res, { user: user.toPublicJSON() }, 'Profile updated');
 });
 
 // @desc    Get user stats
 // @route   GET /api/users/stats
 const getUserStats = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.user._id).select('-refreshTokens');
+  const user = await User.findById(req.user._id);
 
   const stats = {
     xp: user.xp,

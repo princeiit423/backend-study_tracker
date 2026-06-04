@@ -7,6 +7,7 @@ const cookieParser = require('cookie-parser');
 const mongoSanitize = require('express-mongo-sanitize');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
+const { clerkMiddleware } = require('@clerk/express');
 require('dotenv').config();
 
 const logger = require('./utils/logger');
@@ -69,6 +70,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser(process.env.COOKIE_SECRET));
 app.use(compression());
+app.use(clerkMiddleware());
 
 // Logging
 if (process.env.NODE_ENV === 'development') {
