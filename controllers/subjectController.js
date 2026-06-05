@@ -37,8 +37,35 @@ const updateSubject = asyncHandler(async (req, res) => {
   const allowedFields = ['name','description','color','icon','goalHours','priority','difficulty','isArchived','order'];
   const updates = {};
   allowedFields.forEach(f => { if (req.body[f] !== undefined) updates[f] = req.body[f]; });
-  const subject = await Subject.findOneAndUpdate({ _id: req.params.id, user: req.user._id }, { $set: updates }, { new: true, runValidators: true });
+  const currentSubject = await Subject.findOne({ _id: req.params.id, user: req.user._id });
+  if (!currentSubject) return errorResponse(res, 'Subject not found', 404);
+
+  if (req.body.name && req.body.name.trim() !== currentSubject.name) {
+    const existing = await Subject.findOne({
+      user: req.user._id,
+      _id: { $ne: req.params.id },
+      name: new RegExp(`^${escapeRegex(String(req.body.name).trim())}$`, 'i'),
+      isArchived: false,
+    });
+    if (existing) return errorResponse(res, 'A subject with this name already exists', 409);
+  }
+
+  if (req.body.exam !== undefined) {
+    if (req.body.exam) {
+      const examDoc = await Exam.findOne({ _id: req.body.exam, user: req.user._id });
+      if (!examDoc) return errorResponse(res, 'Exam not found', 404);
+      updates.exam = req.body.exam;
+    } else {
+      updates.exam = null;
+    }
+  }
+
+  const subject = await Subject.findOneAndUpdate({ _id: req.params.id, user: req.user._id }, { $set: updates }, { new: true, runValidators: true }).populate('exam', 'name color');
   if (!subject) return errorResponse(res, 'Subject not found', 404);
+  if (req.body.exam !== undefined) {
+    if (currentSubject.exam) await Exam.findByIdAndUpdate(currentSubject.exam, { $pull: { subjects: subject._id } });
+    if (subject.exam) await Exam.findByIdAndUpdate(subject.exam, { $addToSet: { subjects: subject._id } });
+  }
   return successResponse(res, { subject }, 'Subject updated');
 });
 
