@@ -1,6 +1,7 @@
 const StudySession = require('../models/StudySession');
 const Subject = require('../models/Subject');
 const Topic = require('../models/Topic');
+const Exam = require('../models/Exam');
 const User = require('../models/User');
 const Goal = require('../models/Goal');
 const asyncHandler = require('../utils/asyncHandler');
@@ -30,6 +31,21 @@ const isProtectedRestGap = (lastStudyDate, todayDate, restDays = []) => {
     cursor = addDays(cursor, 1);
   }
   return true;
+};
+
+const getDateKey = (date) => new Date(date).toISOString().split('T')[0];
+
+const toDateStart = (dateKey) => {
+  const date = new Date(`${dateKey}T00:00:00.000Z`);
+  date.setUTCHours(0, 0, 0, 0);
+  return date;
+};
+
+const isConsecutiveStudyDate = (previousKey, currentKey, restDays = []) => {
+  const previousDate = toDateStart(previousKey);
+  const currentDate = toDateStart(currentKey);
+  if ((currentDate - previousDate) / 86400000 === 1) return true;
+  return isProtectedRestGap(previousDate, currentDate, restDays);
 };
 
 const calculateQualityScore = ({ duration, focusScore, productivityRating, distractions = 0, reflection = {} }) => {
@@ -70,8 +86,72 @@ const updateUserStats = async (userId, durationSeconds) => {
   };
 };
 
+const recomputeUserStreaks = async (userId) => {
+  const user = await User.findById(userId);
+  if (!user) return;
+
+  const sessions = await StudySession.find({ user: userId, isActive: false })
+    .select('startTime date')
+    .sort({ startTime: 1 });
+  const dateKeys = [...new Set(sessions.map(session => session.date || getDateKey(session.startTime)))];
+
+  if (dateKeys.length === 0) {
+    user.currentStreak = 0;
+    user.longestStreak = 0;
+    user.lastStudyDate = null;
+    await user.save();
+    return;
+  }
+
+  let run = 0;
+  let longest = 0;
+  let previousKey = null;
+  const restDays = user.preferences?.restDays || [];
+
+  for (const dateKey of dateKeys) {
+    run = previousKey && isConsecutiveStudyDate(previousKey, dateKey, restDays) ? run + 1 : 1;
+    longest = Math.max(longest, run);
+    previousKey = dateKey;
+  }
+
+  const latestKey = dateKeys[dateKeys.length - 1];
+  const today = new Date();
+  const todayKey = getDateKey(today);
+  const yesterdayKey = getDateKey(Date.now() - 86400000);
+  const latestDate = toDateStart(latestKey);
+  const currentStreakIsLive = latestKey === todayKey || latestKey === yesterdayKey || isProtectedRestGap(latestDate, today, restDays);
+
+  user.currentStreak = currentStreakIsLive ? run : 0;
+  user.longestStreak = longest;
+  user.lastStudyDate = latestDate;
+  await user.save();
+};
+
+const reverseSessionStats = async (session) => {
+  const hours = (session.duration || 0) / 3600;
+  const xpEarned = session.xpEarned || Math.round(hours * XP_PER_HOUR);
+  const user = await User.findById(session.user);
+
+  if (user) {
+    user.totalStudyHours = Math.max(0, (user.totalStudyHours || 0) - hours);
+    user.xp = Math.max(0, (user.xp || 0) - xpEarned);
+    user.level = user.calculateLevel();
+    await user.save();
+  }
+
+  const updates = [];
+  if (session.subject) {
+    updates.push(Subject.findByIdAndUpdate(session.subject, { $inc: { totalStudyHours: -hours } }));
+  }
+  if (session.topic) {
+    updates.push(Topic.findByIdAndUpdate(session.topic, { $inc: { actualHours: -hours } }));
+  }
+
+  await Promise.all(updates);
+};
+
 const syncCompletedSessionGoals = async (userId) => {
-  const activeGoals = await Goal.find({ user: userId, isActive: true, isCompleted: false, category: 'hours' });
+  const activeGoals = await Goal.find({ user: userId, isActive: true, category: 'hours' });
   const completedGoals = [];
 
   for (const goal of activeGoals) {
@@ -87,6 +167,9 @@ const syncCompletedSessionGoals = async (userId) => {
       goal.isCompleted = true;
       goal.completedAt = new Date();
       completedGoals.push(goal);
+    } else if (goal.currentValue < goal.targetValue && goal.isCompleted) {
+      goal.isCompleted = false;
+      goal.completedAt = null;
     }
 
     await goal.save();
@@ -110,6 +193,7 @@ const getSessions = asyncHandler(async (req, res) => {
   const sessions = await StudySession.find(filter)
     .populate('subject', 'name color icon')
     .populate('topic', 'name')
+    .populate('exam', 'name color')
     .sort({ startTime: -1 })
     .skip((page - 1) * limit)
     .limit(Number(limit));
@@ -120,10 +204,27 @@ const startSession = asyncHandler(async (req, res) => {
   const existing = await StudySession.findOne({ user: req.user._id, isActive: true });
   if (existing) return errorResponse(res, 'A session is already active', 400);
   const { subjectId, topicId, examId, title, mode } = req.body;
+  if (subjectId) {
+    const subject = await Subject.findOne({ _id: subjectId, user: req.user._id });
+    if (!subject) return errorResponse(res, 'Subject not found', 404);
+  }
+  if (topicId) {
+    const topic = await Topic.findOne({ _id: topicId, user: req.user._id, ...(subjectId ? { subject: subjectId } : {}) });
+    if (!topic) return errorResponse(res, 'Topic not found', 404);
+  }
+  if (examId) {
+    const exam = await Exam.findOne({ _id: examId, user: req.user._id });
+    if (!exam) return errorResponse(res, 'Exam not found', 404);
+  }
   const session = await StudySession.create({
     user: req.user._id, subject: subjectId || null, topic: topicId || null, exam: examId || null,
     title: title || '', startTime: new Date(), isActive: true, mode: mode || 'standard',
   });
+  await session.populate([
+    { path: 'subject', select: 'name color icon' },
+    { path: 'topic', select: 'name' },
+    { path: 'exam', select: 'name color' },
+  ]);
   return successResponse(res, { session }, 'Session started', 201);
 });
 
@@ -196,6 +297,18 @@ const addManualSession = asyncHandler(async (req, res) => {
   const start = new Date(startTime);
   const end = new Date(endTime);
   if (end <= start) return errorResponse(res, 'End time must be after start time', 400);
+  if (subjectId) {
+    const subject = await Subject.findOne({ _id: subjectId, user: req.user._id });
+    if (!subject) return errorResponse(res, 'Subject not found', 404);
+  }
+  if (topicId) {
+    const topic = await Topic.findOne({ _id: topicId, user: req.user._id, ...(subjectId ? { subject: subjectId } : {}) });
+    if (!topic) return errorResponse(res, 'Topic not found', 404);
+  }
+  if (examId) {
+    const exam = await Exam.findOne({ _id: examId, user: req.user._id });
+    if (!exam) return errorResponse(res, 'Exam not found', 404);
+  }
   const duration = Math.round((end - start) / 1000);
   const { xpEarned, streakInfo } = await updateUserStats(req.user._id, duration);
   const session = await StudySession.create({
@@ -206,6 +319,7 @@ const addManualSession = asyncHandler(async (req, res) => {
     xpEarned,
   });
   if (subjectId) await Subject.findByIdAndUpdate(subjectId, { $inc: { totalStudyHours: duration / 3600 } });
+  if (topicId) await Topic.findByIdAndUpdate(topicId, { $inc: { actualHours: duration / 3600 } });
   await Promise.all([
     notifyStudySessionCompleted(req.user._id, session, xpEarned),
     notifyStreakProgress(req.user._id, streakInfo),
@@ -218,13 +332,18 @@ const addManualSession = asyncHandler(async (req, res) => {
 const getActiveSession = asyncHandler(async (req, res) => {
   const session = await StudySession.findOne({ user: req.user._id, isActive: true })
     .populate('subject', 'name color icon')
-    .populate('topic', 'name');
+    .populate('topic', 'name')
+    .populate('exam', 'name color');
   return successResponse(res, { session: session || null }, 'Active session retrieved');
 });
 
 const deleteSession = asyncHandler(async (req, res) => {
-  const session = await StudySession.findOneAndDelete({ _id: req.params.id, user: req.user._id, isActive: false });
+  const session = await StudySession.findOne({ _id: req.params.id, user: req.user._id, isActive: false });
   if (!session) return errorResponse(res, 'Session not found', 404);
+  await reverseSessionStats(session);
+  await session.deleteOne();
+  await recomputeUserStreaks(req.user._id);
+  await syncCompletedSessionGoals(req.user._id);
   return successResponse(res, {}, 'Session deleted');
 });
 
