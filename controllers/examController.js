@@ -36,6 +36,9 @@ const updateExam = asyncHandler(async (req, res) => {
   if (req.body.isPrimary) await Exam.updateMany({ user: req.user._id, _id: { $ne: req.params.id } }, { isPrimary: false });
   const updates = {};
   allowedFields.forEach(f => { if (req.body[f] !== undefined) updates[f] = req.body[f]; });
+  if (Object.keys(updates).length === 0) {
+    return errorResponse(res, 'No valid exam fields provided for update', 400);
+  }
   const exam = await Exam.findOneAndUpdate({ _id: req.params.id, user: req.user._id }, { $set: updates }, { new: true, runValidators: true });
   if (!exam) return errorResponse(res, 'Exam not found', 404);
   return successResponse(res, { exam }, 'Exam updated');

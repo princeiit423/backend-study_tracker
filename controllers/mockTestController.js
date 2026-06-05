@@ -15,6 +15,9 @@ const createMockTest = asyncHandler(async (req, res) => {
 });
 
 const updateMockTest = asyncHandler(async (req, res) => {
+  if (Object.keys(req.body || {}).length === 0) {
+    return errorResponse(res, 'No mock test fields provided for update', 400);
+  }
   const test = await MockTest.findOneAndUpdate({ _id: req.params.id, user: req.user._id }, { $set: req.body }, { new: true, runValidators: true });
   if (!test) return errorResponse(res, 'Test not found', 404);
   return successResponse(res, { test }, 'Test updated');

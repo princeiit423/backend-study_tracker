@@ -60,6 +60,10 @@ const updateSubject = asyncHandler(async (req, res) => {
     }
   }
 
+  if (Object.keys(updates).length === 0) {
+    return errorResponse(res, 'No valid subject fields provided for update', 400);
+  }
+
   const subject = await Subject.findOneAndUpdate({ _id: req.params.id, user: req.user._id }, { $set: updates }, { new: true, runValidators: true }).populate('exam', 'name color');
   if (!subject) return errorResponse(res, 'Subject not found', 404);
   if (req.body.exam !== undefined) {

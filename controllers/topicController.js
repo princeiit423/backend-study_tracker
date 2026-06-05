@@ -39,6 +39,9 @@ const updateTopic = asyncHandler(async (req, res) => {
   allowedFields.forEach(f => { if (req.body[f] !== undefined) updates[f] = req.body[f]; });
   if (updates.isCompleted === true) updates.completedAt = new Date();
   else if (updates.isCompleted === false) updates.completedAt = null;
+  if (Object.keys(updates).length === 0) {
+    return errorResponse(res, 'No valid topic fields provided for update', 400);
+  }
   const topic = await Topic.findOneAndUpdate({ _id: req.params.id, user: req.user._id }, { $set: updates }, { new: true, runValidators: true });
   if (!topic) return errorResponse(res, 'Topic not found', 404);
   await updateSubjectProgress(topic.subject, req.user._id);

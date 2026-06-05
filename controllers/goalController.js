@@ -38,6 +38,9 @@ const updateGoal = asyncHandler(async (req, res) => {
   const allowedFields = ['title','description','targetValue','unit','endDate','color','isActive','milestones'];
   const updates = {};
   allowedFields.forEach(f => { if (req.body[f] !== undefined) updates[f] = req.body[f]; });
+  if (Object.keys(updates).length === 0) {
+    return errorResponse(res, 'No valid goal fields provided for update', 400);
+  }
   const goal = await Goal.findOneAndUpdate({ _id: req.params.id, user: req.user._id }, { $set: updates }, { new: true, runValidators: true });
   if (!goal) return errorResponse(res, 'Goal not found', 404);
   return successResponse(res, { goal }, 'Goal updated');
