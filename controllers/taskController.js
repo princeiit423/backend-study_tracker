@@ -12,7 +12,7 @@ const getTasks = asyncHandler(async (req, res) => {
     .populate('subject', 'name color')
     .populate('topic', 'name')
     .populate('goal', 'title')
-    .sort({ isCompleted: 1, priority: -1, createdAt: -1 });
+    .sort({ date: -1, isCompleted: 1, createdAt: -1 });
   return successResponse(res, { tasks }, 'Tasks retrieved');
 });
 

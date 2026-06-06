@@ -7,7 +7,10 @@ const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$
 
 const updateSubjectProgress = async (subjectId, userId) => {
   const topics = await Topic.find({ subject: subjectId, user: userId, parentTopic: null });
-  if (topics.length === 0) return;
+  if (topics.length === 0) {
+    await Subject.findByIdAndUpdate(subjectId, { completionPercentage: 0 });
+    return;
+  }
   const completed = topics.filter(t => t.isCompleted).length;
   const completionPercentage = Math.round((completed / topics.length) * 100);
   await Subject.findByIdAndUpdate(subjectId, { completionPercentage });
@@ -51,7 +54,7 @@ const updateTopic = asyncHandler(async (req, res) => {
 const deleteTopic = asyncHandler(async (req, res) => {
   const topic = await Topic.findOneAndDelete({ _id: req.params.id, user: req.user._id });
   if (!topic) return errorResponse(res, 'Topic not found', 404);
-  await Topic.deleteMany({ parentTopic: topic._id });
+  await Topic.deleteMany({ parentTopic: topic._id, user: req.user._id });
   await updateSubjectProgress(topic.subject, req.user._id);
   return successResponse(res, {}, 'Topic deleted');
 });

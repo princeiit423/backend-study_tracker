@@ -13,6 +13,16 @@ const { successResponse, errorResponse } = require('../utils/response');
 const todayKey = () => new Date().toISOString().split('T')[0];
 const dateDaysAgo = days => new Date(Date.now() - days * 86400000);
 
+const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const updateSubjectProgress = async (subjectId, userId) => {
+  const topics = await Topic.find({ subject: subjectId, user: userId, parentTopic: null });
+  const completionPercentage = topics.length
+    ? Math.round((topics.filter(topic => topic.isCompleted).length / topics.length) * 100)
+    : 0;
+  await Subject.findByIdAndUpdate(subjectId, { completionPercentage });
+};
+
 const getWeaknessReview = asyncHandler(async (req, res) => {
   const [topics, mistakes, subjects] = await Promise.all([
     Topic.find({ user: req.user._id, isCompleted: false }).populate('subject', 'name color'),
@@ -119,16 +129,21 @@ const quickCapture = asyncHandler(async (req, res) => {
   const lower = text.toLowerCase();
 
   if (lower.startsWith('note:')) {
-    const note = await Note.create({ user: req.user._id, title: text.slice(5).trim().slice(0, 80) || 'Quick note', content: text.slice(5).trim(), type: 'quick' });
+    const content = text.slice(5).trim();
+    if (!content) return errorResponse(res, 'Note text is required after "note:"', 400);
+    const note = await Note.create({ user: req.user._id, title: content.slice(0, 80) || 'Quick note', content, type: 'quick' });
     return successResponse(res, { type: 'note', item: note }, 'Quick note captured', 201);
   }
 
   if (lower.startsWith('mistake:')) {
-    const mistake = await Mistake.create({ user: req.user._id, mistake: text.slice(8).trim(), reason: 'other' });
+    const mistakeText = text.slice(8).trim();
+    if (!mistakeText) return errorResponse(res, 'Mistake text is required after "mistake:"', 400);
+    const mistake = await Mistake.create({ user: req.user._id, mistake: mistakeText, reason: 'other' });
     return successResponse(res, { type: 'mistake', item: mistake }, 'Mistake captured', 201);
   }
 
   const taskTitle = lower.startsWith('task:') ? text.slice(5).trim() : text;
+  if (!taskTitle) return errorResponse(res, 'Task title is required', 400);
   const task = await DailyTask.create({ user: req.user._id, title: taskTitle, date: todayKey(), priority: lower.includes('urgent') ? 'high' : 'medium' });
   return successResponse(res, { type: 'task', item: task }, 'Task captured', 201);
 });
@@ -136,15 +151,20 @@ const quickCapture = asyncHandler(async (req, res) => {
 const importSyllabus = asyncHandler(async (req, res) => {
   const subject = await Subject.findOne({ _id: req.body.subjectId, user: req.user._id });
   if (!subject) return errorResponse(res, 'Subject not found', 404);
-  const lines = String(req.body.text || req.body.syllabus || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const lines = [...new Set(String(req.body.text || req.body.syllabus || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean))];
   if (!lines.length) return errorResponse(res, 'Paste at least one topic', 400);
 
-  const existing = await Topic.find({ user: req.user._id, subject: subject._id, name: { $in: lines } }).select('name');
+  const existing = await Topic.find({
+    user: req.user._id,
+    subject: subject._id,
+    $or: lines.map(line => ({ name: new RegExp(`^${escapeRegex(line)}$`, 'i') })),
+  }).select('name');
   const existingNames = new Set(existing.map(topic => topic.name.toLowerCase()));
   const docs = lines
     .filter(line => !existingNames.has(line.toLowerCase()))
     .map((name, index) => ({ user: req.user._id, subject: subject._id, name, order: index }));
   const topics = docs.length ? await Topic.insertMany(docs) : [];
+  await updateSubjectProgress(subject._id, req.user._id);
   return successResponse(res, { created: topics.length, skipped: lines.length - topics.length, topics }, 'Syllabus imported');
 });
 

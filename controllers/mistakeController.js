@@ -1,4 +1,6 @@
 const Mistake = require('../models/Mistake');
+const Subject = require('../models/Subject');
+const Topic = require('../models/Topic');
 const mongoose = require('mongoose');
 const asyncHandler = require('../utils/asyncHandler');
 const { successResponse, errorResponse } = require('../utils/response');
@@ -16,19 +18,35 @@ const getMistakes = asyncHandler(async (req, res) => {
 });
 
 const createMistake = asyncHandler(async (req, res) => {
+  if (!req.body.mistake?.trim()) return errorResponse(res, 'Mistake is required', 400);
+
+  let subject = null;
+  if (req.body.subject) {
+    if (!mongoose.Types.ObjectId.isValid(req.body.subject)) return errorResponse(res, 'Subject not found', 404);
+    subject = await Subject.findOne({ _id: req.body.subject, user: req.user._id });
+    if (!subject) return errorResponse(res, 'Subject not found', 404);
+  }
+
+  let topic = null;
   const hasTopicId = mongoose.Types.ObjectId.isValid(req.body.topic);
+  if (hasTopicId) {
+    topic = await Topic.findOne({ _id: req.body.topic, user: req.user._id });
+    if (!topic) return errorResponse(res, 'Topic not found', 404);
+  }
+
   const mistake = await Mistake.create({
     user: req.user._id,
-    subject: req.body.subject || null,
-    topic: hasTopicId ? req.body.topic : null,
+    subject: subject?._id || null,
+    topic: topic?._id || null,
     topicText: hasTopicId ? '' : req.body.topic || '',
     mockTest: req.body.mockTest || null,
     question: req.body.question || '',
-    mistake: req.body.mistake,
+    mistake: req.body.mistake.trim(),
     reason: req.body.reason || 'other',
     fix: req.body.fix || '',
   });
-  return successResponse(res, { mistake }, 'Mistake saved', 201);
+  const populated = await Mistake.findById(mistake._id).populate('subject', 'name color').populate('topic', 'name');
+  return successResponse(res, { mistake: populated }, 'Mistake saved', 201);
 });
 
 const updateMistake = asyncHandler(async (req, res) => {
@@ -37,7 +55,9 @@ const updateMistake = asyncHandler(async (req, res) => {
   allowed.forEach(field => { if (req.body[field] !== undefined) updates[field] = req.body[field]; });
   if (updates.isResolved === true) updates.resolvedAt = new Date();
   if (updates.isResolved === false) updates.resolvedAt = null;
-  const mistake = await Mistake.findOneAndUpdate({ _id: req.params.id, user: req.user._id }, { $set: updates }, { new: true });
+  const mistake = await Mistake.findOneAndUpdate({ _id: req.params.id, user: req.user._id }, { $set: updates }, { new: true, runValidators: true })
+    .populate('subject', 'name color')
+    .populate('topic', 'name');
   if (!mistake) return errorResponse(res, 'Mistake not found', 404);
   return successResponse(res, { mistake }, 'Mistake updated');
 });
